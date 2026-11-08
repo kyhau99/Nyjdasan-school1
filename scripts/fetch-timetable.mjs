@@ -1,4 +1,4 @@
-// 컴시간알리미(comci.net:4082) 교사 시간표를 가져와 timetable.json으로 저장합니다.
+ // 컴시간알리미(comci.net:4082) 교사 시간표를 가져와 timetable.json으로 저장합니다.
 // 비공식 서비스를 역공학한 코드라 사이트가 바뀌면 동작이 달라질 수 있어요.
 import { writeFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
@@ -93,6 +93,20 @@ export function analyze(data, teacher) {
   return best;
 }
 
+function diagnose(name, page) {
+  console.log(`\n===== ${name} 페이지 진단 (길이 ${page.length}) =====`);
+  console.log("script 태그:", [...page.matchAll(/<script[^>]*>/gi)].map(m => m[0]).slice(0, 10).join(" "));
+  for (const kw of ["sc_data", "ajax", "url", "school_ra", "btoa", "XMLHttp", "fetch(", "_T"]) {
+    let from = 0;
+    for (let n = 0; n < 2; n++) {
+      const i = page.indexOf(kw, from);
+      if (i < 0) break;
+      console.log(`[${kw}] ...${page.slice(Math.max(0, i - 100), i + 160).replace(/\s+/g, " ")}...`);
+      from = i + kw.length;
+    }
+  }
+}
+
 async function main() {
   const query = process.env.SCHOOL_QUERY || "남양주다산";
   const teacher = process.env.TEACHER || "금유호";
@@ -105,7 +119,9 @@ async function main() {
   const ttRoute = urls.find(u => /^\w+\?$/.test(u)) || (searchRoute && searchRoute.replace(/\?\d+l$/, "?"));
   console.log("접두어:", prefix, "| 검색 경로:", searchRoute, "| 시간표 경로:", ttRoute, "| 발견한 url:", urls.join(" , "));
   if (!prefix || !searchRoute || !ttRoute) {
-    console.log("컴시간 페이지 구조를 읽지 못했어요. 페이지 앞부분:\n" + page.slice(0, 1500));
+    console.log("컴시간 페이지 구조를 읽지 못했어요. 진단 정보를 출력합니다.");
+    diagnose("th", page);
+    try { diagnose("st", await get("st")); } catch (e) { console.log("st 페이지 오류:", e.message); }
     process.exitCode = 1; return;
   }
 
@@ -128,3 +144,4 @@ async function main() {
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   main().catch(e => { console.error("오류:", e.message); process.exitCode = 1; });
 }
+
