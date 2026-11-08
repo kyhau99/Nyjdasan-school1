@@ -83,6 +83,17 @@ dialog p{font-size:13px;color:var(--sub);margin:8px 0 0}
 .chip{border:1px solid var(--line);background:var(--bg);color:var(--ink);border-radius:999px;padding:6px 11px;font:inherit;font-size:13px;min-height:34px}
 .chip.on{background:#d8483a;border-color:#d8483a;color:#fff}
 dialog{max-height:calc(100% - 48px);overflow:auto}
+.now{background:var(--accent);color:var(--bg);border-radius:20px;padding:16px 18px;margin-bottom:10px}
+.now small{display:block;opacity:.85;font-size:13px}.now b{font-size:24px}.now b span{font-size:16px;font-weight:500;opacity:.9}
+.now.nx{background:var(--card);color:var(--ink)}.now.nx small{color:var(--sub);opacity:1}
+.tt{display:grid;grid-template-columns:36px repeat(5,1fr);gap:5px;margin:14px 0 10px}
+.th{text-align:center;font-size:13px;font-weight:700;color:var(--sub);padding:4px 0}.th.tod{color:var(--accent)}
+.pn{display:flex;flex-direction:column;align-items:center;justify-content:center;font-size:10px;color:var(--sub);line-height:1.2}.pn b{font-size:15px;color:var(--ink)}
+.cell{border:0;border-radius:12px;min-height:60px;padding:4px 2px;font:inherit;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;background:hsl(var(--h) 55% 50% / .16);color:var(--ink);min-width:0}
+.cell b{font-size:12px;line-height:1.25;overflow-wrap:anywhere}.cell span{font-size:11px;color:var(--sub)}
+.cell.nil{background:var(--card)}.cell.tod{outline:1.5px solid var(--line)}.cell.live{outline:2.5px solid var(--accent)}
+.hint{color:var(--sub);font-size:13px;text-align:center;margin:6px 0 12px}
+.row2{display:flex;gap:10px}.row2 button{flex:1;height:44px;border:0;border-radius:12px;background:var(--card);color:var(--ink);font:inherit}
 </style>
 </head>
 <body>
@@ -99,7 +110,8 @@ dialog{max-height:calc(100% - 48px);overflow:auto}
     <button id="t-today"><span>📍</span>오늘</button>
     <button id="t-meal"><span>🍚</span>급식</button>
     <button id="t-week"><span>🗓️</span>주간</button>
-    <button id="t-sch"><span>📅</span>학사일정</button>
+    <button id="t-sch"><span>📅</span>일정</button>
+    <button id="t-tt"><span>🧑‍🏫</span>시간표</button>
   </nav>
 </div>
 
@@ -110,9 +122,24 @@ dialog{max-height:calc(100% - 48px);overflow:auto}
   <label for="f-key">인증키 (선택)</label>
   <input id="f-key" autocomplete="off" placeholder="open.neis.go.kr 에서 발급">
   <p>인증키가 없으면 한 번에 5건만 조회됩니다. 무료 발급 후 입력하면 한 달 전체가 표시됩니다. 키는 이 기기에만 저장됩니다.</p>
+  <label for="f-teacher">시간표 이름</label>
+  <input id="f-teacher" autocomplete="off">
+  <label for="f-times">교시별 시작 시각 (쉼표로 구분)</label>
+  <input id="f-times" autocomplete="off">
+  <label for="f-len">수업 시간 (분)</label>
+  <input id="f-len" inputmode="numeric">
   <label>피할 알레르기 (해당 메뉴를 빨갛게 표시)</label>
   <div id="chips"></div>
   <div class="row"><button id="cancel">닫기</button><button class="pri" id="save">저장</button></div>
+</dialog>
+
+<dialog id="cdlg">
+  <h2 id="c-title" style="margin:0;font-size:18px"></h2>
+  <label for="c-s">과목</label>
+  <input id="c-s" autocomplete="off" placeholder="짧게 쓰면 보기 좋아요 (예: AI수학)">
+  <label for="c-c">학급</label>
+  <input id="c-c" autocomplete="off" placeholder="예: 2-3">
+  <div class="row"><button id="c-del">비우기</button><button id="c-cancel">닫기</button><button class="pri" id="c-save">저장</button></div>
 </dialog>
 
 <script>
@@ -122,6 +149,10 @@ const store = {
   set(k, v){ try { localStorage.setItem(k, v); } catch(e){} }
 };
 let cfg = { name: store.get("name", "남양주다산고등학교"), key: store.get("key", ""), avoid: (() => { try { return JSON.parse(store.get("avoid", "[]")); } catch(e){ return []; } })(), code: store.get("code", ""), codeName: store.get("codeName", "") };
+cfg.teacher = store.get("teacher", "금유호");
+cfg.times = store.get("times", "08:50,09:50,10:50,11:50,13:40,14:40,15:40").split(",");
+cfg.len = +store.get("len", "50") || 50;
+cfg.tt = (() => { try { return JSON.parse(store.get("tt", "{}")); } catch(e){ return {}; } })();
 const now = new Date();
 const S = { tab: "today", loaded: "", y: now.getFullYear(), m: now.getMonth() + 1, sel: ymd(now), meals: {}, events: {}, loading: false, error: "" };
 const $ = id => document.getElementById(id);
@@ -197,6 +228,38 @@ function dishLi(x){
 function mealCard(r){
   return `<section class="meal"><h3>${esc(r.MMEAL_SC_NM)}<em>${r.CAL_INFO ? esc(r.CAL_INFO) : ""}</em></h3><ul>${dishes(r.DDISH_NM).map(dishLi).join("")}</ul></section>`;
 }
+const toMin = x => { const [h, m] = x.split(":"); return +h * 60 + +m; };
+const fmt = m => String(Math.floor(m / 60)).padStart(2, "0") + ":" + String(m % 60).padStart(2, "0");
+const hue = t => { let h = 0; for (const ch of t) h = (h * 31 + ch.charCodeAt(0)) % 360; return h; };
+function curPeriod(){
+  const t = new Date(), mins = t.getHours() * 60 + t.getMinutes(), d = t.getDay();
+  const st = cfg.times.map(toMin);
+  return { d, mins, st, cur: d >= 1 && d <= 5 ? st.findIndex(x => mins >= x && mins < x + cfg.len) : -1 };
+}
+function ttCard(){
+  const { d, mins, st, cur } = curPeriod();
+  if (d < 1 || d > 5) return '<div class="now"><small>오늘</small><b>수업이 없는 날이에요</b></div>';
+  const lbl = i => { const c = cfg.tt[d + "-" + (i + 1)]; return c && c.s ? esc(c.s) + (c.c ? ` <span>${esc(c.c)}</span>` : "") : "공강"; };
+  let h = "";
+  if (cur >= 0) h += `<div class="now"><small>지금 · ${cur+1}교시 ${fmt(st[cur])}–${fmt(st[cur]+cfg.len)}</small><b>${lbl(cur)}</b></div>`;
+  const nx = st.findIndex((x, i) => x > mins && cfg.tt[d + "-" + (i + 1)] && cfg.tt[d + "-" + (i + 1)].s);
+  if (nx >= 0) h += `<div class="now nx"><small>다음 · ${nx+1}교시 ${fmt(st[nx])} (${st[nx]-mins}분 뒤)</small><b>${lbl(nx)}</b></div>`;
+  else if (cur < 0) h = '<div class="now"><small>오늘</small><b>남은 수업이 없어요</b></div>';
+  return h;
+}
+function renderTT(){
+  const { d: td, cur } = curPeriod();
+  let h = `<div class="big"><b>${esc(cfg.teacher)} 시간표</b></div>` + ttCard();
+  h += '<div class="tt"><div></div>' + [1,2,3,4,5].map(d => `<div class="th${d === td ? " tod" : ""}">${DOW[d]}</div>`).join("");
+  cfg.times.forEach((tm, i) => {
+    h += `<div class="pn"><b>${i+1}</b>${esc(tm)}</div>`;
+    for (let d = 1; d <= 5; d++){
+      const c = cfg.tt[d + "-" + (i + 1)], has = c && c.s;
+      h += `<button class="cell${has ? "" : " nil"}${d === td ? " tod" : ""}${d === td && i === cur ? " live" : ""}" data-k="${d}-${i+1}"${has ? ` style="--h:${hue(c.s)}"` : ""}>${has ? `<b>${esc(c.s)}</b><span>${esc(c.c || "")}</span>` : ""}</button>`;
+    }
+  });
+  return h + '</div><p class="hint">칸을 누르면 과목과 학급을 입력할 수 있어요.</p><div class="row2"><button id="bk-out">백업 복사</button><button id="bk-in">백업 붙여넣기</button></div>';
+}
 function renderToday(){
   const k = ymd(now), list = S.meals[k] || [], ev = S.events[k] || [];
   let h = `<div class="big"><b>${now.getMonth()+1}월 ${now.getDate()}일</b><span>${DOW[now.getDay()]}요일</span></div>`;
@@ -249,11 +312,12 @@ function renderSch(){
 function render(){
   $("ym").textContent = S.y + "년 " + S.m + "월";
   $("title").textContent = cfg.name;
-  ["today","meal","week","sch"].forEach(t => $("t-" + t).className = S.tab === t ? "on" : "");
-  $("monthbar").style.display = S.tab === "today" ? "none" : "";
+  ["today","meal","week","sch","tt"].forEach(t => $("t-" + t).className = S.tab === t ? "on" : "");
+  $("monthbar").style.display = S.tab === "today" || S.tab === "tt" ? "none" : "";
   if (S.tab === "week"){ const [a, b] = weekRange(); $("ym").textContent = `${+a.slice(4,6)}.${+a.slice(6)} – ${+b.slice(4,6)}.${+b.slice(6)}`; }
   let html = "";
-  if (S.error) html += `<div class="err">${esc(S.error)}</div>`;
+  if (S.tab === "tt") html += renderTT();
+  else if (S.error) html += `<div class="err">${esc(S.error)}</div>`;
   else {
     if (!cfg.key) html += '<div class="note">인증키 없이 샘플 모드로 조회 중이라 5건까지만 표시돼요. 설정(⚙︎)에서 인증키를 입력해 주세요.</div>';
     html += ({ today: renderToday, meal: renderMeal, week: renderWeek, sch: renderSch })[S.tab]();
@@ -267,10 +331,11 @@ function render(){
 $("main").addEventListener("click", e => {
   const b = e.target.closest(".day"); if (b){ S.sel = b.dataset.d; render(); }
 });
-["today","meal","week","sch"].forEach(t => $("t-" + t).onclick = () => setTab(t));
+["today","meal","week","sch","tt"].forEach(t => $("t-" + t).onclick = () => setTab(t));
 function setTab(t){
   S.tab = t;
   if (t === "today"){ S.y = now.getFullYear(); S.m = now.getMonth() + 1; S.sel = ymd(now); }
+  if (t === "tt"){ render(); return; }
   if (t === "week" || S.loaded !== S.y + String(S.m).padStart(2, "0")) load(); else render();
 }
 function shift(n){
@@ -279,11 +344,34 @@ function shift(n){
   else d = new Date(S.y, S.m - 1 + n, 1);
   S.y = d.getFullYear(); S.m = d.getMonth() + 1; S.sel = ymd(d); load();
 }
+let editing = "";
+function persist(){ store.set("tt", JSON.stringify(cfg.tt)); $("cdlg").close(); render(); }
+$("main").addEventListener("click", e => {
+  const c = e.target.closest(".cell");
+  if (c){
+    editing = c.dataset.k; const [d, p] = editing.split("-"), v = cfg.tt[editing] || {};
+    $("c-title").textContent = DOW[d] + "요일 " + p + "교시";
+    $("c-s").value = v.s || ""; $("c-c").value = v.c || ""; $("cdlg").showModal(); return;
+  }
+  if (e.target.id === "bk-out"){
+    const txt = JSON.stringify(cfg.tt);
+    (navigator.clipboard ? navigator.clipboard.writeText(txt) : Promise.reject()).then(() => alert("시간표를 복사했어요. 메모 앱에 붙여넣어 보관하세요."), () => prompt("아래 내용을 복사하세요", txt));
+  }
+  if (e.target.id === "bk-in"){
+    const t = prompt("복사해 둔 시간표를 붙여넣으세요");
+    if (t){ try { const o = JSON.parse(t); if (o && typeof o === "object"){ cfg.tt = o; store.set("tt", JSON.stringify(o)); render(); } } catch(err){ alert("형식이 올바르지 않아요."); } }
+  }
+});
+$("c-save").onclick = () => { const v = $("c-s").value.trim(); if (v) cfg.tt[editing] = { s: v, c: $("c-c").value.trim() }; else delete cfg.tt[editing]; persist(); };
+$("c-del").onclick = () => { delete cfg.tt[editing]; persist(); };
+$("c-cancel").onclick = () => $("cdlg").close();
+setInterval(() => { if (S.tab === "tt" && !$("cdlg").open && !$("dlg").open) render(); }, 30000);
 $("chips").addEventListener("click", e => { const b = e.target.closest(".chip"); if (b) b.classList.toggle("on"); });
 $("prev").onclick = () => shift(-1);
 $("next").onclick = () => shift(1);
 $("gear").onclick = () => {
   $("f-name").value = cfg.name; $("f-key").value = cfg.key;
+  $("f-teacher").value = cfg.teacher; $("f-times").value = cfg.times.join(","); $("f-len").value = cfg.len;
   $("chips").innerHTML = ALLERGENS.map((n, i) => `<button type="button" class="chip${cfg.avoid.includes(String(i+1)) ? " on" : ""}" data-c="${i+1}">${n}</button>`).join("");
   $("dlg").showModal();
 };
@@ -292,6 +380,10 @@ $("save").onclick = () => {
   cfg.name = $("f-name").value.trim() || "남양주다산고등학교"; cfg.key = $("f-key").value.trim();
   store.set("name", cfg.name); store.set("key", cfg.key);
   cfg.avoid = [...document.querySelectorAll("#chips .on")].map(b => b.dataset.c); store.set("avoid", JSON.stringify(cfg.avoid));
+  cfg.teacher = $("f-teacher").value.trim() || "금유호"; store.set("teacher", cfg.teacher);
+  const tm = $("f-times").value.split(",").map(x => x.trim()).filter(x => /^\d{1,2}:\d{2}$/.test(x));
+  if (tm.length){ cfg.times = tm; store.set("times", tm.join(",")); }
+  cfg.len = Math.max(10, +$("f-len").value || 50); store.set("len", String(cfg.len));
   $("dlg").close(); load();
 };
 load();
